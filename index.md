@@ -1,37 +1,111 @@
-## Welcome to GitHub Pages
+# Welcome to glFTPd best practice
 
-You can use the [editor on GitHub](https://github.com/tittof/tittof.github.io/edit/master/index.md) to maintain and preview the content for your website in Markdown files.
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+So you want to run glFTPd.
 
-### Markdown
+DISCLAIMER: What you can read here is just my humble opinion.
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+Take everything with a grain of salt, keep having fun
+and question everything.
 
-```markdown
-Syntax highlighted code block
+You know it's all about fun. Even if it gets serious :-)
 
-# Header 1
-## Header 2
-### Header 3
+## Logging
 
-- Bulleted
-- List
+Do not invent your own logging but use already established mechanisms for that.
+One of them is syslog(). That's easy to use :-)
 
-1. Numbered
-2. List
+Recently the rsyslogd syslog server became popular.
+You can use it on all the platforms that are supported by glFTPd.
 
-**Bold** and _Italic_ and `Code` text
+Since glFTPd is run within chroot we provide a chrooted /dev/log file
+and listen on localhost on some udp port to receive log messages
 
-[Link](url) and ![Image](src)
-```
+Then we format them and write that out to a logfile in ftp-data/logs
+where software like pzs-ng can pick the messages up and process them
+as events or something.
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
+While this is an example for FreeBSD it also works with Leenox.
+Just keep in mind that /var/run/log is /dev/log there.
 
-### Jekyll Themes
+    #   __  ____  __       ___
+    #  / /_/ / /_/ /____  / _/
+    # / __/ / __/ __/ _ \/ _/
+    # \__/ /\__/\__/\___/_/
+    #   /_/
+    #  / rsyslog config
+    module(load="imudp") # needs to be done just once
+    input(type="imudp" inputname="imudp.glftpd" address="127.0.0.1" port="11514")
+    module(load="imuxsock")
+    input(type="imuxsock" HostName="chroot.glftpd" Socket="/opt/server/glftpd/var/run/log")
+    $template glftpdFormat,"%timegenerated:::date-wdayname% %timegenerated:1:3% %timegenerated:::date-day% %timegenerated:::date-hour%:%timegenerated:::date-minute%:%timegenerated:::date-second% %timegenerated:::date-year% %syslogtag% %msg:2:$%\n"
+    # Log anything from host glftpd to logfile
+    if $hostname == 'chroot.glftpd' then /opt/server/glftpd/ftp-data/logs/syslog.log;glftpdFormat
+    & stop
+    if $inputname == 'imudp.glftpd' then /opt/server/glftpd/ftp-data/logs/syslog.log;glftpdFormat
+    & stop
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/tittof/tittof.github.io/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
+pzs-ng reads logfiles using regular expressions that differ for each known logtype.
 
-### Support or Contact
+    0. glftpdlog set regex ^.+ \d+:\d+:\d+ \d{4} (\S+): (.+)
+    1. loginlog  see logtype 2
+    2. sysoplog  set regex ^.+ \d+:\d+:\d+ \d{3} \[(\d+)\s*\] (.+)
 
-Having trouble with Pages? Check out our [documentation](https://help.github.com/categories/github-pages-basics/) or [contact support](https://github.com/contact) and we’ll help you sort it out.
+so we use logtype glftpdlog in ngBot.conf:
+
+    set glftpdlog(SYSLOG)       "$glroot/ftp-data/logs/syslog.log"
+
+## cscripts and why scriptable does not necessarily mean you have to use a bash (coming up)
+
+glFTPd is known as a scriptable ftp server. You can hook into most events that
+occur during the session for example the creation of a directory or deletion
+of a file and let a script decide if that action is allowed to take place or
+not. Cool thing :-)
+
+Just imagine a rat pack of clients rushing on your ftp server trying to create
+directories. Your script gets executed very often within a short period
+of time and that's when you realize your load increases quite a bit.
+
+Soon users start to yell at you because they feel your ftp server lags like
+hell.
+
+Maybe that's because you used a shell script as a cscript which is perfectly
+ok to do unless you could replace that script with a compiled program.
+
+People tend to love golang or rust nowerdays but C is fine :-)
+
+See [f-dirprecheck](http://www.high-society.at/f-scripts/#f-dirprecheck) 
+
+My own goal is to not have any shell script within glroot/bin.
+
+## configuration for the sitebot belongs solely into ngBot.conf (coming up)
+Changes to pzs-ng happen from time to time. To also keep your sitebot
+up to date use symlinks from the sitebot's installation path to the source
+directory of pzs-ng which is regularly updated using git pull.
+
+    ngBot.conf.defaults -> ../src/pzs-ng/sitebot/ngBot.conf.defaults
+    ngBot.conf.dist -> ../src/pzs-ng/sitebot/ngBot.conf.dist
+    ngBot.help -> ../src/pzs-ng/sitebot/ngBot.help
+    ngBot.tcl -> ../src/pzs-ng/sitebot/ngBot.tcl
+    ngBot.vars -> ../src/pzs-ng/sitebot/ngBot.vars
+
+this implies that you absolutely have to avoid changes to these files!
+All changes belong to ngBot.conf or you loos updateability.
+
+Refrain from manually editing ngBot.tcl or modules/glftpd.tcl.
+If you cannot live without editing those files better report it
+to the devs on irc in #pzs-ng@efnet.
+
+You can configure Plugins in ngBot.conf instead of editing the plugin's tcl
+file like this
+
+    variable ::ngBot::plugin::NickDb::libSQLite "/lib/sqlite3/libsqlite3.so"
+    variable ::ngBot::plugin::Blow::keyx "false"
+    set ::ngBot::plugin::Blow::blowkey(#winamp) "somepass"
+
+## generate your configs to get tooled changes (coming up)
+## version control is a thing (coming up)
+## get your rights section straight (coming up)
+## keep your libraries updated (coming up)
+## uids and gids or why sitebot gets its own system user (coming up)
+## encryption is mandatory (coming up)
